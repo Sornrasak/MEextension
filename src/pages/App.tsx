@@ -2,10 +2,12 @@ import React, { useEffect, useState, useReducer } from 'react';
 import {
   executeSpeedBinbReaderScript,
   executeNicoDougaScript,
+  executeNicoMangaScript,
   executeComicWalkerScript,
   executeComicPixivScript,
   executeKindleScript,
   executeComicbushiScript,
+  executeTakecomicScript,
 } from '../services/handlers';
 import { unpackReducer } from '../utils/reducers';
 import { storageSet } from '../utils/chrome/storage';
@@ -39,11 +41,13 @@ async function _kaishi(
 
 const readerOptions: ReaderOption[] = [
   { key: READERS.NICO_DOUGA, value: READERS.NICO_DOUGA },
+  { key: READERS.NICO_MANGA, value: READERS.NICO_MANGA },
   { key: READERS.COMIC_WALKER, value: READERS.COMIC_WALKER },
   { key: READERS.SPEED_BINB, value: READERS.SPEED_BINB },
   { key: READERS.COMIC_PIXIV, value: READERS.COMIC_PIXIV },
   { key: READERS.KINDLE, value: READERS.KINDLE },
   { key: READERS.COMICBUSHI, value: READERS.COMICBUSHI },
+  { key: READERS.TAKECOMIC, value: READERS.TAKECOMIC },
 ];
 
 export default function App(): JSX.Element {
@@ -90,6 +94,9 @@ export default function App(): JSX.Element {
       case READERS.NICO_DOUGA:
         executeNicoDougaScript();
         break;
+      case READERS.NICO_MANGA:
+        executeNicoMangaScript();
+        break;
       case READERS.SPEED_BINB:
         executeSpeedBinbReaderScript();
         break;
@@ -104,6 +111,9 @@ export default function App(): JSX.Element {
         break;
       case READERS.COMICBUSHI:
         executeComicbushiScript();
+        break;
+      case READERS.TAKECOMIC:
+        executeTakecomicScript();
         break;
       default:
         return;

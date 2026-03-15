@@ -54,7 +54,11 @@
                 "handlers/kindle.js",
                 "handlers/kindle.js.map",
                 "handlers/comicbushi.js",
-                "handlers/comicbushi.js.map"
+                "handlers/comicbushi.js.map",
+                "handlers/takecomic.js",
+                "handlers/takecomic.js.map",
+                "handlers/nico-manga.js",
+                "handlers/nico-manga.js.map"
             ],
             "matches": ["<all_urls>"]
         }

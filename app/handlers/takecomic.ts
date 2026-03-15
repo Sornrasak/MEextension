@@ -1,0 +1,543 @@
+import { timeout, zipAndDownload } from "../utils/utils";
+
+// === Types (exported for CLI / tests) ===
+
+export type ContentsInfo = {
+    totalPages: number;
+    result: Array<PagePayload>;
+};
+
+export type PagePayload = {
+    imageUrl: string;
+    scramble?: string | number[];
+    sort?: number;
+    width?: number;
+    height?: number;
+};
+
+export type PageCapture = { pageId: number; dataUrl: string };
+
+// === Constants ===
+
+export const FALLBACK_PATTERN = [11, 6, 1, 8, 14, 7, 0, 4, 9, 15, 13, 10, 12, 5, 2, 3];
+export const TILES_PER_SIDE = 4; // Preferred grid (4x4)
+
+// === Main ===
+
+export async function main() {
+    console.log("Takecomic (Comici) handler starting with API descrambler...");
+
+    const metadata = extractMetadata();
+    const viewerId = extractViewerId();
+
+    if (!viewerId) {
+        alert(
+            'Could not locate the Comici viewer ID.\nPlease open a chapter and ensure the reader is fully loaded (button "開いて読む").'
+        );
+        return;
+    }
+
+    try {
+        const contents = await fetchContentsInfo(viewerId);
+        const pagesMeta = (contents?.result || []).slice().sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
+
+        if (pagesMeta.length === 0) {
+            alert("Could not find any pages in the API response. Please reload the viewer and try again.");
+            return;
+        }
+
+        console.log(`Found ${pagesMeta.length} pages from API. Downloading & descrambling...`);
+
+        const captures: PageCapture[] = [];
+        for (let i = 0; i < pagesMeta.length; i++) {
+            const pageNumber = i + 1;
+            const meta = pagesMeta[i];
+
+            console.log(`→ Processing page ${pageNumber}/${pagesMeta.length}`);
+            try {
+                const capture = await downloadAndDescramble(meta, pageNumber, viewerId);
+                if (capture) {
+                    captures.push(capture);
+                } else {
+                    console.warn(`✗ Skipped page ${pageNumber}: no data returned`);
+                }
+            } catch (error) {
+                console.error(`✗ Failed to process page ${pageNumber}`, error);
+            }
+
+            // Gentle pacing to avoid flooding the API
+            await timeout(50);
+        }
+
+        if (captures.length === 0) {
+            alert("Failed to process any pages. Check console logs for details.");
+            return;
+        }
+
+        console.log(`✓ Successfully processed ${captures.length} pages. Creating ZIP...`);
+        zipAndDownload(captures, { FILENAME_PREFIX: metadata.title, CHAPTER: metadata.chapter });
+    } catch (error) {
+        console.error("Takecomic handler failed:", error);
+        alert("Failed to process Takecomic chapter. Check console for details.");
+    }
+}
+
+// === Metadata extraction ===
+
+export function extractMetadata(): { title: string; chapter: string } {
+    let title = "unknown";
+    let chapter = "01";
+
+    const titleElement =
+        document.querySelector("h1") ||
+        document.querySelector('[class*="title"]') ||
+        document.querySelector('[class*="episode"]') ||
+        document.querySelector("title");
+
+    if (titleElement?.textContent) {
+        title = titleElement.textContent.trim();
+    }
+
+    const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content");
+    if (ogTitle) {
+        title = ogTitle.trim();
+    }
+
+    const chapterPatterns = [
+        /第(\d+)[話巻]/,
+        /(\d+)[話巻]/,
+        /[Ee]pisode\s*(\d+)/,
+        /[Cc]hapter\s*(\d+)/,
+        /#(\d+)/,
+        /ep\.?\s*(\d+)/i,
+    ];
+
+    for (const pattern of chapterPatterns) {
+        const match = title.match(pattern);
+        if (match) {
+            chapter = match[1].padStart(2, "0");
+            break;
+        }
+    }
+
+    if (chapter === "01") {
+        const breadcrumbs = document.querySelector('[class*="breadcrumb"]');
+        const breadcrumbText = breadcrumbs?.textContent ?? "";
+        for (const pattern of chapterPatterns) {
+            const match = breadcrumbText.match(pattern);
+            if (match) {
+                chapter = match[1].padStart(2, "0");
+                break;
+            }
+        }
+    }
+
+    console.log(`Extracted metadata → Title: "${title}", Chapter: "${chapter}"`);
+    return { title, chapter };
+}
+
+// === Viewer ID extraction ===
+
+export function extractViewerId(): string | null {
+    const selectors = [
+        "[data-comici-viewer-id]",
+        "[data-viewer-id]",
+        "[data-viewerid]",
+        "[data-comic-viewerid]",
+        "#viewer",
+    ];
+
+    for (const selector of selectors) {
+        const element = document.querySelector(selector) as HTMLElement | null;
+        if (!element) continue;
+        const attrNames = ["data-comici-viewer-id", "data-viewer-id", "data-viewerid", "data-viewerId"];
+        for (const attr of attrNames) {
+            const value = element.getAttribute(attr);
+            if (value && value.trim()) {
+                console.log(`Found viewer ID via ${selector} (${attr}).`);
+                return value.trim();
+            }
+        }
+        if (element.dataset?.viewerId) {
+            console.log(`Found viewer ID via ${selector} (dataset).`);
+            return element.dataset.viewerId.trim();
+        }
+    }
+
+    const metaViewer = document.querySelector('meta[name="comici-viewer-id"]')?.getAttribute("content");
+    if (metaViewer) {
+        console.log("Found viewer ID via meta tag.");
+        return metaViewer.trim();
+    }
+
+    const scriptMatch = extractViewerIdFromScripts();
+    if (scriptMatch) {
+        console.log("Found viewer ID via inline script.");
+        return scriptMatch;
+    }
+
+    const globalAny = window as Record<string, unknown>;
+    const candidates = [
+        (globalAny.__NUXT__ as any)?.state?.viewerId,
+        (globalAny.__NUXT__ as any)?.state?.book?.viewerId,
+        (globalAny.__NUXT__ as any)?.state?.episode?.viewerId,
+        (globalAny.__NEXT_DATA__ as any)?.props?.pageProps?.viewerId,
+        (globalAny as any).viewerId,
+        (globalAny as any).__VIEWER_ID__,
+    ];
+
+    for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.length > 6) {
+            console.log("Found viewer ID via global state.");
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+export function extractViewerIdFromScripts(): string | null {
+    const scripts = Array.from(document.querySelectorAll("script"));
+    for (const script of scripts) {
+        const text = script.textContent;
+        if (!text) continue;
+        const match =
+            text.match(/comiciViewerId["']?\s*[:=]\s*["']([a-z0-9_-]+)["']/i) ||
+            text.match(/viewerId["']?\s*[:=]\s*["']([a-z0-9_-]+)["']/i);
+        if (match) {
+            return match[1];
+        }
+    }
+    return null;
+}
+
+export function extractEpisodeId(): string | null {
+    const match = window.location.pathname.match(/episodes\/([a-z0-9]+)/i);
+    return match ? match[1] : null;
+}
+
+// === API ===
+
+export async function fetchContentsInfo(viewerId: string): Promise<ContentsInfo> {
+    const probe = await requestContentsInfoRange(viewerId, 0, 1);
+
+    if (!probe || !probe.result?.length) {
+        throw new Error("contentsInfo probe returned no pages");
+    }
+
+    const totalPages = probe.totalPages ?? probe.result.length;
+
+    if (totalPages <= probe.result.length) {
+        return probe;
+    }
+
+    const full = await requestContentsInfoRange(viewerId, 0, totalPages);
+    if (!full || !full.result?.length) {
+        console.warn("Full contentsInfo request failed, falling back to probe result");
+        return probe;
+    }
+
+    return full;
+}
+
+export async function requestContentsInfoRange(
+    viewerId: string,
+    pageFrom: number,
+    pageTo: number
+): Promise<ContentsInfo | null> {
+    const url = new URL("/api/book/contentsInfo", window.location.origin);
+    url.searchParams.set("user-id", "");
+    url.searchParams.set("comici-viewer-id", viewerId);
+    url.searchParams.set("page-from", String(Math.max(0, pageFrom)));
+    url.searchParams.set("page-to", String(Math.max(pageFrom, pageTo)));
+
+    const response = await fetch(url.toString(), {
+        method: "GET",
+        credentials: "include",
+        headers: {
+            Accept: "application/json, text/plain, */*",
+            "Accept-Language": navigator.language ? `${navigator.language},en;q=0.8` : "en-US,en;q=0.8",
+            Authorization: "",
+        },
+        referrer: window.location.href,
+        referrerPolicy: "strict-origin-when-cross-origin",
+        mode: "cors",
+    });
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        console.warn("contentsInfo request failed", response.status, response.statusText, text.slice(0, 200));
+        return null;
+    }
+
+    return (await response.json()) as ContentsInfo;
+}
+
+// === Download & Descramble ===
+
+export async function downloadAndDescramble(meta: PagePayload, pageNumber: number, viewerId: string): Promise<PageCapture | null> {
+    const imageUrl = buildImageUrl(meta.imageUrl, viewerId);
+    if (!imageUrl) {
+        console.warn(`Page ${pageNumber} is missing imageUrl`);
+        return null;
+    }
+
+    const response = await fetch(imageUrl, {
+        mode: "cors",
+        credentials: "omit",
+        headers: {
+            Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": navigator.language ? `${navigator.language},en;q=0.8` : "en-US,en;q=0.8",
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch page image (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const scramblePattern = parseScramblePattern(meta.scramble) ?? FALLBACK_PATTERN;
+    const dataUrl = await descrambleBlob(blob, scramblePattern);
+
+    console.log(`✓ Page ${pageNumber} descrambled (${Math.round(blob.size / 1024)} KB)`);
+    return { pageId: pageNumber, dataUrl };
+}
+
+export function buildImageUrl(rawUrl: string | undefined, viewerId: string): string | null {
+    if (!rawUrl) return null;
+
+    if (rawUrl.includes("viewer.takecomic.jp")) {
+        return rawUrl;
+    }
+
+    try {
+        const url = new URL(rawUrl, window.location.origin);
+        return url.toString();
+    } catch {
+        // rawUrl might already be a file name; assemble manually
+    }
+
+    // Example format: master-{timestamp}-{page}.jpg
+    const fileName = rawUrl.replace(/^\/+/, "");
+    if (!fileName) return null;
+
+    return `https://viewer.takecomic.jp/book/${viewerId}/${fileName}`;
+}
+
+export function parseScramblePattern(scramble?: string | number[]): number[] | null {
+    if (!scramble) return null;
+
+    const parseArray = (raw: unknown): number[] | null => {
+        if (!Array.isArray(raw)) return null;
+        const values = raw.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+        return values.length ? values : null;
+    };
+
+    if (Array.isArray(scramble)) {
+        return parseArray(scramble);
+    }
+
+    const trimmed = scramble.trim();
+    if (!trimmed) return null;
+
+    try {
+        const parsed = JSON.parse(trimmed);
+        const values = parseArray(parsed);
+        if (values) return values;
+    } catch {
+        // Continue with manual split fallback below
+    }
+
+    const manual = trimmed
+        .replace(/[\[\]]/g, "")
+        .split(/[,|\s]+/)
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+
+    return manual.length ? manual : null;
+}
+
+// === Canvas Descrambling ===
+
+export async function descrambleBlob(blob: Blob, pattern: number[]): Promise<string> {
+    const image = await blobToImage(blob);
+
+    const scratch = document.createElement("canvas");
+    scratch.width = image.width;
+    scratch.height = image.height;
+    const scratchCtx = scratch.getContext("2d");
+    if (!scratchCtx) {
+        throw new Error("Canvas 2D context unavailable");
+    }
+    // Ensure we never accidentally introduce seams from resampling.
+    scratchCtx.imageSmoothingEnabled = false;
+    scratchCtx.drawImage(image, 0, 0);
+
+    if (pattern.length <= 1) {
+        return scratch.toDataURL("image/png");
+    }
+
+    const { rows, cols } = inferGrid(pattern.length);
+    const permutation = derivePermutation(pattern, rows, cols);
+
+    if (permutation.length !== rows * cols) {
+        console.warn("Permutation mismatch, returning original image");
+        return scratch.toDataURL("image/png");
+    }
+
+    const output = document.createElement("canvas");
+    output.width = image.width;
+    output.height = image.height;
+    const outputCtx = output.getContext("2d");
+    if (!outputCtx) {
+        throw new Error("Canvas 2D context unavailable for output");
+    }
+    outputCtx.imageSmoothingEnabled = false;
+
+    // IMPORTANT:
+    // takecomic tiles are permuted across the grid. If the image size isn't divisible by (rows, cols),
+    // a naive segmentation produces uneven tile sizes (e.g. last row is +1px). When tiles move between
+    // rows/cols, drawImage would *scale* them by 1px, creating thin horizontal/vertical seams.
+    //
+    // To avoid that, descramble only the largest region divisible by the grid, and keep the remainder
+    // strips (bottom/right) untouched.
+    const effectiveWidth = image.width - (image.width % cols);
+    const effectiveHeight = image.height - (image.height % rows);
+
+    // Preserve remainder strips (if any) by starting from the original image.
+    outputCtx.drawImage(scratch, 0, 0);
+
+    if (effectiveWidth <= 0 || effectiveHeight <= 0) {
+        console.warn("Invalid effective tile area, returning original image", {
+            width: image.width,
+            height: image.height,
+            rows,
+            cols,
+            effectiveWidth,
+            effectiveHeight,
+        });
+        return output.toDataURL("image/png");
+    }
+
+    const xSegments = buildSegments(effectiveWidth, cols);
+    const ySegments = buildSegments(effectiveHeight, rows);
+
+    const destXSegments = buildSegments(effectiveWidth, cols);
+    const destYSegments = buildSegments(effectiveHeight, rows);
+
+    for (let destIndex = 0; destIndex < permutation.length; destIndex++) {
+        const srcIndex = permutation[destIndex];
+        const sourceRect = getTileRect(srcIndex, xSegments, ySegments, cols);
+        const destRect = getTileRect(destIndex, destXSegments, destYSegments, cols);
+
+        outputCtx.drawImage(
+            scratch,
+            sourceRect.x,
+            sourceRect.y,
+            sourceRect.width,
+            sourceRect.height,
+            destRect.x,
+            destRect.y,
+            destRect.width,
+            destRect.height
+        );
+    }
+
+    return output.toDataURL("image/png");
+}
+
+// === Pure functions (grid, permutation, segments) ===
+
+export function inferGrid(length: number): { rows: number; cols: number } {
+    if (length === TILES_PER_SIDE * TILES_PER_SIDE) {
+        return { rows: TILES_PER_SIDE, cols: TILES_PER_SIDE };
+    }
+
+    const sqrt = Math.sqrt(length);
+    if (Number.isInteger(sqrt)) {
+        return { rows: sqrt, cols: sqrt };
+    }
+
+    let bestRows = 1;
+    let bestCols = length;
+    let bestDiff = Number.MAX_SAFE_INTEGER;
+    for (let rows = 1; rows <= length; rows++) {
+        if (length % rows !== 0) continue;
+        const cols = length / rows;
+        const diff = Math.abs(rows - cols);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            bestRows = rows;
+            bestCols = cols;
+        }
+    }
+    return { rows: bestRows, cols: bestCols };
+}
+
+export function derivePermutation(pattern: number[], rows: number, cols: number): number[] {
+    const destTransposed = transposePattern(pattern, rows, cols);
+    return destTransposed.map((value) => transposeIndex(value, rows, cols));
+}
+
+export function transposePattern(pattern: number[], rows: number, cols: number): number[] {
+    const matrix: number[][] = [];
+    for (let r = 0; r < rows; r++) {
+        matrix.push(pattern.slice(r * cols, (r + 1) * cols));
+    }
+
+    const result: number[] = [];
+    for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+            result.push(matrix[r][c]);
+        }
+    }
+
+    return result;
+}
+
+export function transposeIndex(value: number, rows: number, cols: number): number {
+    const r = Math.floor(value / cols);
+    const c = value % cols;
+    return c * cols + r;
+}
+
+export type Segment = { start: number; size: number };
+
+export function buildSegments(total: number, parts: number): Segment[] {
+    const segments: Segment[] = [];
+    for (let i = 0; i < parts; i++) {
+        const start = Math.floor((i * total) / parts);
+        const end = Math.floor(((i + 1) * total) / parts);
+        segments.push({ start, size: end - start });
+    }
+    return segments;
+}
+
+export function getTileRect(index: number, columns: Segment[], rows: Segment[], cols: number) {
+    const rowIndex = Math.floor(index / cols);
+    const colIndex = index % cols;
+    const col = columns[colIndex] ?? { start: 0, size: 0 };
+    const row = rows[rowIndex] ?? { start: 0, size: 0 };
+    return { x: col.start, y: row.start, width: col.size, height: row.size };
+}
+
+export async function blobToImage(blob: Blob): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const image = new Image();
+        image.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(image);
+        };
+        image.onerror = (error) => {
+            URL.revokeObjectURL(url);
+            reject(error);
+        };
+        image.src = url;
+    });
+}
+
+// === Auto-execute in browser context (extension IIFE or Puppeteer injection) ===
+// When imported as a module (e.g. CLI/tests), main() is NOT auto-called.
+// The IIFE build (build.ts) wraps this so main() runs automatically.
+// For Puppeteer injection via addScriptTag, the build output includes main().
+main();

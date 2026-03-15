@@ -1,11 +1,13 @@
 // Reader types
 export enum READERS {
   NICO_DOUGA = 'Nico-douga',
+  NICO_MANGA = 'Nico-manga',
   COMIC_WALKER = 'Comic-walker',
   SPEED_BINB = 'Speed-binb-reader',
   COMIC_PIXIV = 'Comic-pixiv',
   KINDLE = 'Kindle',
   COMICBUSHI = 'Comicbushi (CORS blocked)',
+  TAKECOMIC = 'Takecomic (Comici)',
 }
 
 export enum PROGRESS_STATUS {
