@@ -97,6 +97,7 @@
   - Not yet tested with a logged-in session (needs manual login to verify)
   - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
   - New account creation is not blocked by CAPTCHA or SMS in this environment, but it does require access to the verification email before registration can complete
+  - Accessing Gmail in the cloud browser to retrieve verification mail is unreliable; repeated Google anti-bot/reCAPTCHA challenges can block inbox access or disable fresh burner accounts
 - **Site quirks**:
   - Successor to `seiga.nicovideo.jp` (old `nico-douga` handler)
   - Series page: `manga.nicovideo.jp/comic/{id}` -- lists episodes
@@ -115,6 +116,7 @@
 - **What was tried and failed**:
   - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-noauth` without login -- page loads and metadata extracts, but no pages are available
   - Attempted new-account flow with a throwaway address -- registration proceeded to the verification screen, but could not continue without inbox access to click the email link
+  - Attempted to open the burner Gmail inbox from the cloud browser to retrieve the verification email -- Google presented repeated reCAPTCHA/anti-bot challenges and the mailbox became unusable; prefer a pre-created shared mailbox with IMAP/API access instead of browser-driving Gmail
 
 ---
 
