@@ -88,13 +88,15 @@
 - **Type**: DOM-based (canvas capture)
 - **Test URL**: https://manga.nicovideo.jp/watch/mg472312 (第1話, requires login)
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
-- **Last tested**: 2026-02-14
+- **Last tested**: 2026-03-15
 - **What works**:
   - Handler created based on proven canvas capture approach
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
 - **Known issues**:
   - Requires Niconico login -- use `--profile` flag with CLI and `--headed` for first login
   - Not yet tested with a logged-in session (needs manual login to verify)
+  - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
+  - New account creation is not blocked by CAPTCHA or SMS in this environment, but it does require access to the verification email before registration can complete
 - **Site quirks**:
   - Successor to `seiga.nicovideo.jp` (old `nico-douga` handler)
   - Series page: `manga.nicovideo.jp/comic/{id}` -- lists episodes
@@ -105,9 +107,14 @@
   - Pages lazy-load: must scroll into view to trigger rendering
   - Canvas starts at `width=1` until rendered; poll until real-sized
   - Without login, shows "ご視聴にはniconicoアカウントが必要です" with only a thumbnail
+  - Login page (`account.nicovideo.jp/login`) supports direct email/phone + password login and third-party login with Apple, X, Facebook, LINE, Google, Yahoo! JAPAN, and Nintendo
+  - Registration page (`account.nicovideo.jp/register/email`) offers the same third-party providers plus email registration guarded by Cloudflare Turnstile
+  - In this environment, Cloudflare Turnstile auto-completed successfully on the registration page without extra interaction
+  - Email registration advanced to "Please check your email" and sent a verification mail from `info@account.nicovideo.jp`
   - Reference: NateScarlet's userscript (https://greasyfork.org/en/scripts/436220, updated 2026-02-04) confirms canvas capture approach
 - **What was tried and failed**:
-  - (none yet -- handler is newly created)
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-noauth` without login -- page loads and metadata extracts, but no pages are available
+  - Attempted new-account flow with a throwaway address -- registration proceeded to the verification screen, but could not continue without inbox access to click the email link
 
 ---
 
