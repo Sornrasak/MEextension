@@ -93,6 +93,7 @@
   - Handler created based on proven canvas capture approach
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
   - CLI now accepts env-driven cookie bootstrap via `NICO_MANGA_COOKIES_JSON`, merges it with any saved cookie file, and persists the merged jar to `cli/cookies/nico-manga.json` for reuse
+  - `bun cli/gmail.ts` now supports Gmail OAuth callback handling, token storage, profile/message queries, and `latest-nico` lookup; it can also auto-fill Google sign-in using the visible mailbox secrets in this cloud session
 - **Known issues**:
   - Requires Niconico login -- use `--profile` flag with CLI and `--headed` for first login
   - Not yet tested with a logged-in session that reaches readable desktop page canvases
