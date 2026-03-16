@@ -85,6 +85,7 @@ Env:
 Notes:
   - If an env var exists whose NAME is the value of AUTOMATION_EMAIL,
     its value is treated as the Google account password for browser login.
+  - Otherwise, AUTOMATION_EMAIL_PASSWORD is used when present.
   - Tokens are stored at ${tokenFile}
 `);
   process.exit(0);
@@ -235,7 +236,7 @@ async function waitForAuthCode(opts: {
   headed: boolean;
   automationEmail: string;
 }): Promise<string> {
-  const password = process.env[opts.automationEmail];
+  const password = resolveAutomationPassword(opts.automationEmail);
   let browser: Browser | null = null;
 
   const codePromise = new Promise<string>((resolve, reject) => {
@@ -506,6 +507,29 @@ function requiredEnv(name: string): string {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function resolveAutomationPassword(automationEmail: string): string | undefined {
+  if (process.env[automationEmail]) {
+    return process.env[automationEmail];
+  }
+
+  if (process.env.AUTOMATION_EMAIL_PASSWORD) {
+    return process.env.AUTOMATION_EMAIL_PASSWORD;
+  }
+
+  const emailNamedSecrets = Object.entries(process.env).filter(
+    ([key, value]) => key.includes("@") && !!value
+  );
+
+  if (emailNamedSecrets.length === 1) {
+    console.log(
+      `Using sole email-keyed secret ${emailNamedSecrets[0][0]} for Google password input`
+    );
+    return emailNamedSecrets[0][1];
+  }
+
+  return undefined;
 }
 
 function ensureParentDir(filePath: string): void {

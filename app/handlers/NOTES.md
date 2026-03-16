@@ -99,7 +99,7 @@
   - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
   - New account creation is not blocked by CAPTCHA or SMS in this environment, but it does require access to the verification email before registration can complete
   - Accessing Gmail in the cloud browser to retrieve verification mail is unreliable; repeated Google anti-bot/reCAPTCHA challenges can block inbox access or disable fresh burner accounts
-  - Fresh cloud sessions currently expose `AUTOMATION_EMAIL`, `GGL_CLIENT_ID`, and `GGL_SECRET`, but not a Gmail refresh token / delegated mailbox credential, so inbox polling still cannot complete end-to-end from the agent alone
+  - Fresh cloud sessions expose `AUTOMATION_EMAIL`, `GGL_CLIENT_ID`, `GGL_SECRET`, and one additional email-keyed secret, but direct Gmail API auth still is not yet working end-to-end
   - Reusing the system Chrome profile at `/home/ubuntu/.config/google-chrome` failed during Puppeteer attach with `TargetCloseError: Protocol error (Target.setAutoAttach): Target closed`, so it is not a reliable auth source right now
 - **Site quirks**:
   - Successor to `seiga.nicovideo.jp` (old `nico-douga` handler)
@@ -123,6 +123,8 @@
   - Attempted to open the burner Gmail inbox from the cloud browser to retrieve the verification email -- Google presented repeated reCAPTCHA/anti-bot challenges and the mailbox became unusable; prefer a pre-created shared mailbox with IMAP/API access instead of browser-driving Gmail
   - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth-no-profile` on 2026-03-16 still reaches metadata but no readable pages/canvases without auth
   - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth --profile "/home/ubuntu/.config/google-chrome"` failed before navigation with Puppeteer's `TargetCloseError`, so the default local Chrome profile cannot currently be reused as a shortcut
+  - Directly calling Gmail API with the visible mailbox secret as a bearer token returned `401 Invalid Credentials`, and exchanging that secret through the Google token endpoint failed (`invalid_grant`)
+  - `bun cli/gmail.ts auth --browser --headed` reached the Google OAuth sign-in flow, accepted the shared mailbox username/password, and then blocked on mandatory 2-Step Verification requesting an SMS code sent to a phone ending in `41`
 
 ### Next session handoff
 
@@ -132,13 +134,14 @@
 - **Mailbox plan**:
   1. Re-check whether mailbox secrets are visible in the fresh agent session
   2. Current expected env names discussed with user: `AUTOMATION_EMAIL`, `GGL_CLIENT_ID`, `GGL_SECRET`
-  3. Confirmed on 2026-03-16: those three env vars are visible, but Gmail API still needs a refresh token (or an equivalent delegated mailbox setup) before inbox polling can work end-to-end
+  3. Confirmed on 2026-03-16: Gmail OAuth browser login accepts the shared mailbox username/password, but Google then requires 2-Step Verification (SMS code to a phone ending in `41`), which currently blocks Gmail API token issuance in-cloud
   4. Expected verification sender for Nico: `info@account.nicovideo.jp`
 - **Best immediate path**:
-  1. Finish Niconico account creation using the shared mailbox outside the cloud browser if needed
-  2. Log into desktop `manga.nicovideo.jp` once
-  3. Export `.nicovideo.jp` cookies and provide them either as `NICO_MANGA_COOKIES_JSON` or by writing `cli/cookies/nico-manga.json` (env injection support is now implemented and confirmed to persist the cookie jar locally)
-  4. Re-run `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth` and verify whether `li.page` canvases are captured successfully
+  1. Complete the Google 2-Step Verification step for the shared mailbox once, or provide an already-issued Gmail API token/token bundle that this cloud agent can reuse
+  2. Use `bun cli/gmail.ts latest-nico` to fetch the newest Nico verification mail and extract the verification URL
+  3. Finish Niconico account creation or Google-based sign-in on desktop `manga.nicovideo.jp`
+  4. Export `.nicovideo.jp` cookies and provide them either as `NICO_MANGA_COOKIES_JSON` or by writing `cli/cookies/nico-manga.json` (env injection support is now implemented and confirmed to persist the cookie jar locally)
+  5. Re-run `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth` and verify whether `li.page` canvases are captured successfully
 
 ---
 
