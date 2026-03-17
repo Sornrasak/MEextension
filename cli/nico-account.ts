@@ -439,18 +439,11 @@ async function submitRegistrationEmail(page: Page, email: string): Promise<boole
     return !!button && !button.disabled;
   }, { timeout: 45_000 });
 
-  await page.click("#button");
-
-  await Promise.race([
-    page.waitForFunction(
-      () => document.body.innerText.includes("Please check your email."),
-      { timeout: 30_000 }
-    ),
-    page.waitForFunction(
-      () => document.body.innerText.includes("メールアドレスを確認してください。"),
-      { timeout: 30_000 }
-    ),
-  ]).catch(() => null);
+  await Promise.allSettled([
+    page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60_000 }),
+    page.click("#button"),
+  ]);
+  await delay(1_000);
 
   const bodyText = await page.evaluate(() => document.body.innerText);
   if (
