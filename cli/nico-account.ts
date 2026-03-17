@@ -318,6 +318,7 @@ async function loginWithSavedAccount(
   cliConfig: NicoCliConfig,
   account: NicoAccountState
 ): Promise<ReaderAccessResult> {
+  const mailboxEmail = account.mailboxEmail || cliConfig.mailboxEmail;
   const browser = await launchBrowser(!cliConfig.headed);
   try {
     const page = await browser.newPage();
@@ -327,10 +328,20 @@ async function loginWithSavedAccount(
     await replaceInputValue(page, "#input__mailtel", account.email);
     await replaceInputValue(page, "#input__password", account.password);
 
+    const loginStartedAt = Date.now();
     await Promise.allSettled([
       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60_000 }),
       page.click("#login__submit"),
     ]);
+
+    if (page.url().includes("/mfa") || (await page.$("#oneTimePw"))) {
+      await completeNicoEmailMfa(page, {
+        mailboxEmail: requireValue(mailboxEmail, "mailboxEmail"),
+        mailboxPassword: requireEnv(cliConfig.mailPasswordEnv),
+        accountEmail: account.email,
+        afterMs: loginStartedAt,
+      });
+    }
 
     const loginError = await page
       .$eval(".notice-error, .text-danger, .error", (el) => el.textContent?.trim() ?? "")
@@ -629,6 +640,83 @@ async function findExistingVerificationMail(opts: {
   }
 }
 
+async function waitForNicoMfaCode(opts: {
+  mailboxEmail: string;
+  mailboxPassword: string;
+  accountEmail: string;
+  afterMs: number;
+  timeoutMs: number;
+}): Promise<string> {
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: {
+      user: opts.mailboxEmail,
+      pass: opts.mailboxPassword,
+    },
+    logger: false,
+  });
+
+  await client.connect();
+
+  try {
+    const deadline = Date.now() + opts.timeoutMs;
+
+    while (Date.now() < deadline) {
+      for (const mailbox of ["INBOX", "[Gmail]/All Mail", "[Gmail]/Spam"]) {
+        const lock = await client.getMailboxLock(mailbox);
+        try {
+          const start = Math.max(1, client.mailbox.exists - 50);
+          for await (const message of client.fetch(
+            `${start}:*`,
+            {
+              uid: true,
+              internalDate: true,
+              envelope: true,
+              source: true,
+            },
+            { uid: false }
+          )) {
+            const decoded = decodeQuotedPrintable(message.source.toString("utf-8"));
+            const receivedAt = message.internalDate?.getTime() ?? 0;
+            if (receivedAt < opts.afterMs - 5_000) {
+              continue;
+            }
+            if (!decoded.includes(opts.accountEmail)) {
+              continue;
+            }
+            if (
+              message.envelope?.subject !== "[Niconico]Confirmation code" &&
+              !decoded.includes("Confirmation code")
+            ) {
+              continue;
+            }
+
+            const otp =
+              decoded.match(
+                /Please enter the following confirmation code to login to your account\.\s+(\d{6})/i
+              )?.[1] ??
+              decoded.match(/\b(\d{6})\b/)?.[1] ??
+              null;
+            if (otp) {
+              return otp;
+            }
+          }
+        } finally {
+          lock.release();
+        }
+      }
+
+      await delay(3_000);
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+
+  throw new Error(`Timed out waiting for Nico MFA code for ${opts.accountEmail}`);
+}
+
 async function completeRegistrationProfile(
   page: Page,
   verificationUrl: string,
@@ -680,6 +768,41 @@ async function completeRegistrationProfile(
     bodyText.match(/ユーザーIDは\s*(\d+)/);
 
   return userIdMatch?.[1];
+}
+
+async function completeNicoEmailMfa(
+  page: Page,
+  opts: {
+    mailboxEmail: string;
+    mailboxPassword: string;
+    accountEmail: string;
+    afterMs: number;
+  }
+): Promise<void> {
+  await page.waitForSelector("#oneTimePw", { timeout: 60_000 });
+
+  const otp = await waitForNicoMfaCode({
+    mailboxEmail: opts.mailboxEmail,
+    mailboxPassword: opts.mailboxPassword,
+    accountEmail: opts.accountEmail,
+    afterMs: opts.afterMs,
+    timeoutMs: 120_000,
+  });
+
+  await replaceInputValue(page, "#oneTimePw", otp);
+
+  const trustChecked = await page.$eval(
+    "#trustDeviceCheck",
+    (element) => (element as HTMLInputElement).checked
+  );
+  if (!trustChecked) {
+    await page.click("#trustDeviceCheck");
+  }
+
+  await Promise.allSettled([
+    page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60_000 }),
+    page.click('input[name="loginBtn"]'),
+  ]);
 }
 
 async function inspectReaderAccess(
