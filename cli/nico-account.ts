@@ -691,17 +691,45 @@ function buildRegistrationEmailCandidates(
     return [mailboxEmail];
   }
 
-  const maxMask = 1 << (normalizedLocal.length - 1);
-  const seen = new Set<number>();
-  const emails: string[] = [];
-
-  while (emails.length < attempts && seen.size < maxMask - 1) {
-    const mask = randomInt(1, maxMask);
-    if (seen.has(mask)) {
-      continue;
+  const candidateMasks: number[] = [];
+  const pushMask = (mask: number) => {
+    if (mask > 0 && !candidateMasks.includes(mask)) {
+      candidateMasks.push(mask);
     }
-    seen.add(mask);
+  };
+
+  // Nico accepted sparse Gmail dot aliases in live testing, but rejected many
+  // dense variants. Prefer one dot first, then gradually increase complexity.
+  for (let first = 1; first < normalizedLocal.length; first++) {
+    pushMask(1 << (first - 1));
+  }
+
+  for (let first = 1; first < normalizedLocal.length; first++) {
+    for (let second = first + 2; second < normalizedLocal.length; second++) {
+      pushMask((1 << (first - 1)) | (1 << (second - 1)));
+    }
+  }
+
+  for (let first = 1; first < normalizedLocal.length; first++) {
+    for (let second = first + 2; second < normalizedLocal.length; second++) {
+      for (
+        let third = second + 2;
+        third < normalizedLocal.length;
+        third++
+      ) {
+        pushMask(
+          (1 << (first - 1)) | (1 << (second - 1)) | (1 << (third - 1))
+        );
+      }
+    }
+  }
+
+  const emails: string[] = [];
+  for (const mask of candidateMasks) {
     emails.push(applyDotMask(normalizedLocal, domain, mask));
+    if (emails.length >= attempts) {
+      break;
+    }
   }
 
   return emails;
