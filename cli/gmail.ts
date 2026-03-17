@@ -81,12 +81,14 @@ Env:
   AUTOMATION_EMAIL   Gmail address
   GGL_CLIENT_ID      Google OAuth client id
   GGL_SECRET         Google OAuth client secret
+  GMAIL_TOKEN_JSON   Optional full stored token bundle for fresh-machine reuse
 
 Notes:
   - If an env var exists whose NAME is the value of AUTOMATION_EMAIL,
     its value is treated as the Google account password for browser login.
   - Otherwise, AUTOMATION_EMAIL_PASSWORD is used when present.
-  - Tokens are stored at ${tokenFile}
+  - Successful auth writes a token bundle to ${tokenFile}
+  - To reuse auth on fresh machines, save that file's full JSON as GMAIL_TOKEN_JSON
 `);
   process.exit(0);
 }
@@ -155,6 +157,9 @@ async function runAuthFlow(opts: {
   };
   writeFileSync(opts.tokenFile, JSON.stringify(storedToken, null, 2));
   console.log(`Saved Gmail token response to ${opts.tokenFile}`);
+  console.log(
+    `For fresh-machine reuse, save the full JSON from ${opts.tokenFile} as GMAIL_TOKEN_JSON`
+  );
 
   const profile = await gmailApiRequest(token.access_token, "/users/me/profile");
   console.log(JSON.stringify(profile, null, 2));
@@ -452,10 +457,23 @@ async function gmailApiRequest(
 }
 
 function readStoredToken(path: string): StoredToken {
-  if (!existsSync(path)) {
-    throw new Error(`Token file not found: ${path}`);
+  if (process.env.GMAIL_TOKEN_JSON) {
+    const storedFromEnv = parseStoredToken(
+      process.env.GMAIL_TOKEN_JSON,
+      "GMAIL_TOKEN_JSON"
+    );
+    ensureParentDir(path);
+    writeFileSync(path, JSON.stringify(storedFromEnv, null, 2));
+    console.log(`Loaded Gmail token bundle from GMAIL_TOKEN_JSON into ${path}`);
+    return storedFromEnv;
   }
-  return JSON.parse(readFileSync(path, "utf-8")) as StoredToken;
+
+  if (!existsSync(path)) {
+    throw new Error(
+      `Token file not found: ${path}. Provide GMAIL_TOKEN_JSON or run \`bun cli/gmail.ts auth --browser --headed\` first.`
+    );
+  }
+  return parseStoredToken(readFileSync(path, "utf-8"), path);
 }
 
 function indexHeaders(
@@ -499,6 +517,28 @@ function decodeBase64Url(value: string): string {
   return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString(
     "utf-8"
   );
+}
+
+function parseStoredToken(rawJson: string, source: string): StoredToken {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (error) {
+    throw new Error(
+      `Failed to parse Gmail token bundle from ${source}: ${String(error)}`
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`Gmail token bundle from ${source} must be a JSON object`);
+  }
+
+  const token = parsed as Partial<StoredToken>;
+  if (!token.access_token || typeof token.access_token !== "string") {
+    throw new Error(`Gmail token bundle from ${source} is missing access_token`);
+  }
+
+  return token as StoredToken;
 }
 
 function requiredEnv(name: string): string {

@@ -94,6 +94,7 @@
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
   - CLI now accepts env-driven cookie bootstrap via `NICO_MANGA_COOKIES_JSON`, merges it with any saved cookie file, and persists the merged jar to `cli/cookies/nico-manga.json` for reuse
   - `bun cli/gmail.ts` now supports Gmail OAuth callback handling, token storage, profile/message queries, and `latest-nico` lookup; it can also auto-fill Google sign-in using the visible mailbox secrets in this cloud session
+  - `bun cli/gmail.ts` now accepts a full Gmail token bundle via `GMAIL_TOKEN_JSON`, writes it to `cli/tokens/gmail.json`, and then uses the normal Gmail API code path (confirmed with a controlled invalid token bundle)
 - **Known issues**:
   - Requires Niconico login -- use `--profile` flag with CLI and `--headed` for first login
   - Not yet tested with a logged-in session that reaches readable desktop page canvases
@@ -139,10 +140,11 @@
   4. Expected verification sender for Nico: `info@account.nicovideo.jp`
 - **Best immediate path**:
   1. Complete the Google 2-Step Verification step for the shared mailbox once, or provide an already-issued Gmail API token/token bundle that this cloud agent can reuse
-  2. Use `bun cli/gmail.ts latest-nico` to fetch the newest Nico verification mail and extract the verification URL
-  3. Finish Niconico account creation or Google-based sign-in on desktop `manga.nicovideo.jp`
-  4. Export `.nicovideo.jp` cookies and provide them either as `NICO_MANGA_COOKIES_JSON` or by writing `cli/cookies/nico-manga.json` (env injection support is now implemented and confirmed to persist the cookie jar locally)
-  5. Re-run `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth` and verify whether `li.page` canvases are captured successfully
+  2. Save the full successful `cli/tokens/gmail.json` contents as `GMAIL_TOKEN_JSON` for fresh-machine reuse
+  3. Use `bun cli/gmail.ts latest-nico` to fetch the newest Nico verification mail and extract the verification URL
+  4. Finish Niconico account creation or Google-based sign-in on desktop `manga.nicovideo.jp`
+  5. Export `.nicovideo.jp` cookies and provide them either as `NICO_MANGA_COOKIES_JSON` or by writing `cli/cookies/nico-manga.json` (env injection support is now implemented and confirmed to persist the cookie jar locally)
+  6. Re-run `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth` and verify whether `li.page` canvases are captured successfully
 
 ---
 
