@@ -84,30 +84,67 @@
 
 ## nico-manga
 
-- **Status**: WIP (needs auth testing)
+- **Status**: WIP (auth bootstrap added; still needs real Nico cookies)
 - **Type**: DOM-based (canvas capture)
 - **Test URL**: https://manga.nicovideo.jp/watch/mg472312 (第1話, requires login)
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
-- **Last tested**: 2026-02-14
+- **Last tested**: 2026-03-16
 - **What works**:
   - Handler created based on proven canvas capture approach
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
+  - CLI now accepts env-driven cookie bootstrap via `NICO_MANGA_COOKIES_JSON`, merges it with any saved cookie file, and persists the merged jar to `cli/cookies/nico-manga.json` for reuse
+  - `bun cli/gmail.ts` now supports Gmail OAuth callback handling, token storage, profile/message queries, and `latest-nico` lookup; it can also auto-fill Google sign-in using the visible mailbox secrets in this cloud session
+  - `bun cli/gmail.ts` now accepts a full Gmail token bundle via `GMAIL_TOKEN_JSON`, writes it to `cli/tokens/gmail.json`, and then uses the normal Gmail API code path (confirmed with a controlled invalid token bundle)
 - **Known issues**:
   - Requires Niconico login -- use `--profile` flag with CLI and `--headed` for first login
-  - Not yet tested with a logged-in session (needs manual login to verify)
+  - Not yet tested with a logged-in session that reaches readable desktop page canvases
+  - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
+  - New account creation is not blocked by CAPTCHA or SMS in this environment, but it does require access to the verification email before registration can complete
+  - Accessing Gmail in the cloud browser to retrieve verification mail is unreliable; repeated Google anti-bot/reCAPTCHA challenges can block inbox access or disable fresh burner accounts
+  - Fresh cloud sessions expose `AUTOMATION_EMAIL`, `GGL_CLIENT_ID`, `GGL_SECRET`, and one additional email-keyed secret, but direct Gmail API auth still is not yet working end-to-end
+  - Reusing the system Chrome profile at `/home/ubuntu/.config/google-chrome` failed during Puppeteer attach with `TargetCloseError: Protocol error (Target.setAutoAttach): Target closed`, so it is not a reliable auth source right now
 - **Site quirks**:
   - Successor to `seiga.nicovideo.jp` (old `nico-douga` handler)
   - Series page: `manga.nicovideo.jp/comic/{id}` -- lists episodes
   - Episode page: `manga.nicovideo.jp/watch/mg{id}` -- the reader
+  - Mobile pages under `sp.manga.nicovideo.jp` can expose series lists and some episodes without login (confirmed: `https://sp.manga.nicovideo.jp/comic/47265`, `https://sp.manga.nicovideo.jp/watch/mg1006398`), but the user explicitly does **not** want to rely on the mobile site for this target
   - Pages are `li.page` elements with `data-page-index` attributes
   - Each page renders as `<canvas>` (excluding `.balloon` comment overlays)
   - Some pages may use `<img data-image-id="...">` as fallback
   - Pages lazy-load: must scroll into view to trigger rendering
   - Canvas starts at `width=1` until rendered; poll until real-sized
   - Without login, shows "ご視聴にはniconicoアカウントが必要です" with only a thumbnail
+  - Login page (`account.nicovideo.jp/login`) supports direct email/phone + password login and third-party login with Apple, X, Facebook, LINE, Google, Yahoo! JAPAN, and Nintendo
+  - Registration page (`account.nicovideo.jp/register/email`) offers the same third-party providers plus email registration guarded by Cloudflare Turnstile
+  - In this environment, Cloudflare Turnstile auto-completed successfully on the registration page without extra interaction
+  - Email registration advanced to "Please check your email" and sent a verification mail from `info@account.nicovideo.jp`
   - Reference: NateScarlet's userscript (https://greasyfork.org/en/scripts/436220, updated 2026-02-04) confirms canvas capture approach
 - **What was tried and failed**:
-  - (none yet -- handler is newly created)
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-noauth` without login -- page loads and metadata extracts, but no pages are available
+  - Attempted new-account flow with a throwaway address -- registration proceeded to the verification screen, but could not continue without inbox access to click the email link
+  - Attempted to open the burner Gmail inbox from the cloud browser to retrieve the verification email -- Google presented repeated reCAPTCHA/anti-bot challenges and the mailbox became unusable; prefer a pre-created shared mailbox with IMAP/API access instead of browser-driving Gmail
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth-no-profile` on 2026-03-16 still reaches metadata but no readable pages/canvases without auth
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth --profile "/home/ubuntu/.config/google-chrome"` failed before navigation with Puppeteer's `TargetCloseError`, so the default local Chrome profile cannot currently be reused as a shortcut
+  - Directly calling Gmail API with the visible mailbox secret as a bearer token returned `401 Invalid Credentials`, and exchanging that secret through the Google token endpoint failed (`invalid_grant`)
+  - `bun cli/gmail.ts auth --browser --headed` reached the Google OAuth sign-in flow, accepted the shared mailbox username/password, and then blocked on mandatory 2-Step Verification requesting an SMS code sent to a phone ending in `41`
+
+### Next session handoff
+
+- **Current blocker**: desktop `manga.nicovideo.jp/watch/mg...` still needs an authenticated Niconico session; anonymous access reaches metadata but not readable page canvases
+- **Do not repeat**: browser-driving Gmail in the cloud is a dead end; use a pre-created shared mailbox with Gmail API / IMAP access, or complete verification outside the cloud browser
+- **User intent**: do not rely on the mobile `sp.manga.nicovideo.jp` site even if it is readable anonymously
+- **Mailbox plan**:
+  1. Re-check whether mailbox secrets are visible in the fresh agent session
+  2. Current expected env names discussed with user: `AUTOMATION_EMAIL`, `GGL_CLIENT_ID`, `GGL_SECRET`
+  3. Confirmed on 2026-03-16: Gmail OAuth browser login accepts the shared mailbox username/password, but Google then requires 2-Step Verification (SMS code to a phone ending in `41`), which currently blocks Gmail API token issuance in-cloud
+  4. Expected verification sender for Nico: `info@account.nicovideo.jp`
+- **Best immediate path**:
+  1. Complete the Google 2-Step Verification step for the shared mailbox once, or provide an already-issued Gmail API token/token bundle that this cloud agent can reuse
+  2. Save the full successful `cli/tokens/gmail.json` contents as `GMAIL_TOKEN_JSON` for fresh-machine reuse
+  3. Use `bun cli/gmail.ts latest-nico` to fetch the newest Nico verification mail and extract the verification URL
+  4. Finish Niconico account creation or Google-based sign-in on desktop `manga.nicovideo.jp`
+  5. Export `.nicovideo.jp` cookies and provide them either as `NICO_MANGA_COOKIES_JSON` or by writing `cli/cookies/nico-manga.json` (env injection support is now implemented and confirmed to persist the cookie jar locally)
+  6. Re-run `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth` and verify whether `li.page` canvases are captured successfully
 
 ---
 

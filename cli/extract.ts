@@ -29,6 +29,10 @@ interface HandlerEntry {
   label: string;
 }
 
+function getCookieEnvVarName(reader: string): string {
+  return `${reader.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_COOKIES_JSON`;
+}
+
 const HANDLERS: Record<string, HandlerEntry> = {
   takecomic: {
     type: "api",
@@ -140,6 +144,8 @@ if (!existsSync(cookieDir)) {
   mkdirSync(cookieDir, { recursive: true });
 }
 const cookieFile = resolve(cookieDir, `${readerKey}.json`);
+const cookieEnvVar = getCookieEnvVarName(readerKey);
+const cookieJson = process.env[cookieEnvVar];
 
 // --login forces headed mode (need visible browser for manual login)
 const isLogin = values.login ?? false;
@@ -155,6 +161,9 @@ console.log(`  URL:     ${values.url}`);
 console.log(`  Output:  ${outputDir}`);
 if (existsSync(cookieFile)) {
   console.log(`  Cookies: ${cookieFile}`);
+}
+if (cookieJson) {
+  console.log(`  Cookie env: ${cookieEnvVar}`);
 }
 if (isLogin) {
   console.log(`  Mode:    Login (will pause for manual auth)`);
@@ -181,6 +190,8 @@ try {
       headless: !isHeaded,
       userDataDir: values.profile,
       cookieFile,
+      cookieJson,
+      cookieJsonSource: cookieEnvVar,
       login: isLogin,
     });
   } else {
@@ -203,6 +214,8 @@ try {
       headless: !isHeaded,
       userDataDir: values.profile,
       cookieFile,
+      cookieJson,
+      cookieJsonSource: cookieEnvVar,
       login: isLogin,
     });
   }
