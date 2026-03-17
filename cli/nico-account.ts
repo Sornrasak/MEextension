@@ -374,18 +374,30 @@ async function registerFreshAccount(cliConfig: NicoCliConfig): Promise<NicoAccou
       const submittedAt = Date.now();
       const registrationStepReached = await submitRegistrationEmail(page, email);
 
-      if (!registrationStepReached) {
-        console.warn(`Registration form did not accept ${email}; trying another candidate.`);
-        continue;
+      let mail: MailMatch | null = null;
+      if (registrationStepReached) {
+        mail = await waitForVerificationMail({
+          mailboxEmail,
+          mailboxPassword,
+          registeredEmail: email,
+          afterMs: submittedAt,
+          timeoutMs: cliConfig.mailTimeoutMs,
+        });
+      } else {
+        mail = await findExistingVerificationMail({
+          mailboxEmail,
+          mailboxPassword,
+          registeredEmail: email,
+        });
+        if (mail) {
+          console.warn(
+            `Registration form rejected ${email}, but an existing verification mail was found; resuming from mailbox state.`
+          );
+        } else {
+          console.warn(`Registration form did not accept ${email}; trying another candidate.`);
+          continue;
+        }
       }
-
-      const mail = await waitForVerificationMail({
-        mailboxEmail,
-        mailboxPassword,
-        registeredEmail: email,
-        afterMs: submittedAt,
-        timeoutMs: cliConfig.mailTimeoutMs,
-      });
 
       const userId = await completeRegistrationProfile(page, mail.verificationUrl, {
         nickname: cliConfig.nickname,
@@ -542,6 +554,79 @@ async function waitForVerificationMail(opts: {
   throw new Error(
     `Timed out waiting for Nico verification mail for ${opts.registeredEmail}`
   );
+}
+
+async function findExistingVerificationMail(opts: {
+  mailboxEmail: string;
+  mailboxPassword: string;
+  registeredEmail: string;
+}): Promise<MailMatch | null> {
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: {
+      user: opts.mailboxEmail,
+      pass: opts.mailboxPassword,
+    },
+    logger: false,
+  });
+
+  await client.connect();
+
+  try {
+    let latestMatch: MailMatch | null = null;
+
+    for (const mailbox of NICO_MAILBOXES) {
+      const lock = await client.getMailboxLock(mailbox);
+      try {
+        const start = Math.max(1, client.mailbox.exists - 100);
+        for await (const message of client.fetch(
+          `${start}:*`,
+          {
+            uid: true,
+            internalDate: true,
+            envelope: true,
+            source: true,
+          },
+          { uid: false }
+        )) {
+          const decoded = decodeQuotedPrintable(message.source.toString("utf-8"));
+          if (!decoded.includes(opts.registeredEmail)) {
+            continue;
+          }
+          if (
+            !decoded.includes(NICO_MAIL_SENDER) &&
+            message.envelope?.subject !== NICO_MAIL_SUBJECT
+          ) {
+            continue;
+          }
+
+          const verificationUrl =
+            decoded.match(
+              /https:\/\/account\.nicovideo\.jp\/register\/profile\?token=[^\s"'<>]+/
+            )?.[0] ?? null;
+          if (!verificationUrl) {
+            continue;
+          }
+
+          latestMatch = {
+            mailbox,
+            uid: message.uid,
+            verificationUrl,
+            receivedAt:
+              message.internalDate?.toISOString() ?? new Date().toISOString(),
+          };
+        }
+      } finally {
+        lock.release();
+      }
+    }
+
+    return latestMatch;
+  } finally {
+    await client.logout().catch(() => {});
+  }
 }
 
 async function completeRegistrationProfile(
