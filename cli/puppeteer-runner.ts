@@ -34,6 +34,10 @@ export interface RunDomHandlerOptions {
   timeout?: number;
   /** Path to a cookie JSON file for session persistence */
   cookieFile?: string;
+  /** Cookie JSON injected via environment, usually for remote auth bootstrap */
+  cookieJson?: string;
+  /** Human-readable source label for cookieJson */
+  cookieJsonSource?: string;
   /** If true, pause after navigation for manual login and save cookies */
   login?: boolean;
 }
@@ -59,6 +63,8 @@ export async function runDomHandler(
     userDataDir,
     timeout = 5 * 60 * 1000,
     cookieFile,
+    cookieJson,
+    cookieJsonSource,
     login = false,
   } = opts;
 
@@ -111,14 +117,35 @@ export async function runDomHandler(
   }
 
   // ---- Load saved cookies before navigation ------------------------------
-  if (cookieFile && existsSync(cookieFile)) {
-    try {
-      const cookies = JSON.parse(readFileSync(cookieFile, "utf-8"));
-      await page.setCookie(...cookies);
-      console.log(`Loaded ${cookies.length} saved cookies from ${cookieFile}`);
-    } catch (err) {
-      console.warn("Failed to load cookies:", err);
-    }
+  const cookiesToSet = mergeCookies([
+    cookieFile && existsSync(cookieFile)
+      ? {
+          cookies: readCookiesFromFile(cookieFile),
+          source: cookieFile,
+        }
+      : null,
+    cookieJson
+      ? {
+          cookies: parseCookieJson(
+            cookieJson,
+            cookieJsonSource ?? "environment cookie JSON"
+          ),
+          source: cookieJsonSource ?? "environment cookie JSON",
+        }
+      : null,
+  ]);
+
+  if (cookiesToSet.length > 0) {
+    await page.setCookie(...cookiesToSet);
+    console.log(`Loaded ${cookiesToSet.length} cookies before navigation`);
+  }
+
+  if (cookieFile && cookieJson && cookiesToSet.length > 0) {
+    ensureParentDir(cookieFile);
+    writeFileSync(cookieFile, JSON.stringify(cookiesToSet, null, 2));
+    console.log(
+      `Persisted ${cookiesToSet.length} merged cookies to ${cookieFile} for reuse`
+    );
   }
 
   // ---- Navigate --------------------------------------------------------
@@ -137,10 +164,7 @@ export async function runDomHandler(
     await waitForEnter();
 
     if (cookieFile) {
-      const cookieDir = dirname(cookieFile);
-      if (!existsSync(cookieDir)) {
-        mkdirSync(cookieDir, { recursive: true });
-      }
+      ensureParentDir(cookieFile);
       const cookies = await page.cookies();
       writeFileSync(cookieFile, JSON.stringify(cookies, null, 2));
       console.log(`Saved ${cookies.length} cookies to ${cookieFile}`);
@@ -221,6 +245,77 @@ function safeReaddir(dir: string): string[] {
     return readdirSync(dir);
   } catch {
     return [];
+  }
+}
+
+function readCookiesFromFile(path: string): puppeteer.Protocol.Network.CookieParam[] {
+  return parseCookieJson(readFileSync(path, "utf-8"), path);
+}
+
+function parseCookieJson(
+  rawJson: string,
+  source: string
+): puppeteer.Protocol.Network.CookieParam[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (error) {
+    throw new Error(`Failed to parse cookies from ${source}: ${String(error)}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Cookie source ${source} must be a JSON array`);
+  }
+
+  return parsed.map((cookie, index) => {
+    if (!cookie || typeof cookie !== "object") {
+      throw new Error(`Cookie ${index + 1} from ${source} is not an object`);
+    }
+
+    return cookie as puppeteer.Protocol.Network.CookieParam;
+  });
+}
+
+function mergeCookies(
+  sources: Array<
+    | {
+        cookies: puppeteer.Protocol.Network.CookieParam[];
+        source: string;
+      }
+    | null
+  >
+): puppeteer.Protocol.Network.CookieParam[] {
+  const merged = new Map<string, puppeteer.Protocol.Network.CookieParam>();
+
+  for (const source of sources) {
+    if (!source || source.cookies.length === 0) {
+      continue;
+    }
+
+    console.log(`Loaded ${source.cookies.length} cookies from ${source.source}`);
+
+    for (const cookie of source.cookies) {
+      merged.set(getCookieKey(cookie), cookie);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function getCookieKey(cookie: puppeteer.Protocol.Network.CookieParam): string {
+  return [
+    cookie.name ?? "",
+    cookie.domain ?? "",
+    cookie.path ?? "",
+    cookie.url ?? "",
+  ].join("|");
+}
+
+function ensureParentDir(filePath: string): void {
+  const parentDir = dirname(filePath);
+  if (!existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
   }
 }
 

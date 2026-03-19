@@ -84,30 +84,64 @@
 
 ## nico-manga
 
-- **Status**: WIP (needs auth testing)
+- **Status**: Working with auth (cookie + email-MFA persistence proven)
 - **Type**: DOM-based (canvas capture)
 - **Test URL**: https://manga.nicovideo.jp/watch/mg472312 (第1話, requires login)
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
-- **Last tested**: 2026-02-14
+- **Last tested**: 2026-03-17
 - **What works**:
   - Handler created based on proven canvas capture approach
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
+  - CLI now accepts env-driven cookie bootstrap via `NICO_MANGA_COOKIES_JSON`, merges it with any saved cookie file, and persists the merged jar to `cli/cookies/nico-manga.json` for reuse
+  - `ME1_APP_PASS` works for Gmail IMAP access against `AUTOMATION_EMAIL`; browser-driving Gmail is no longer required to retrieve Nico mail
+  - New helper `bun cli/nico-account.ts ensure` can validate saved cookies, log back in with stored Nico email/password, complete Nico's email-based 2-step verification, and persist refreshed `.nicovideo.jp` cookies
+  - New helper `bun cli/nico-account.ts scrape --url "https://manga.nicovideo.jp/watch/mg472312"` can ensure auth and then run the existing `nico-manga` extractor in one step
+  - Authenticated extraction now works end to end for `mg472312`: 34 `li.page` elements found, 34 pages captured, ZIP written, and `bun cli/verify.ts` reports all 34 pages valid PNGs at 650x924
 - **Known issues**:
-  - Requires Niconico login -- use `--profile` flag with CLI and `--headed` for first login
-  - Not yet tested with a logged-in session (needs manual login to verify)
+  - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
+  - Fresh device logins for a saved Nico account are not password-only: Nico sends a 6-digit email confirmation code and the helper must read it from Gmail before reader access is restored
+  - Fresh account creation from the burner mailbox is still inconsistent right now: the registration page previously accepted the base address and some dotted Gmail aliases, but later in the session started responding with `Invalid email address` for both the base mailbox and new dotted variants
+  - Resuming from an old registration email only works while the verification token remains valid; a stale token redirects away from the profile form
+  - Reusing the system Chrome profile at `/home/ubuntu/.config/google-chrome` failed during Puppeteer attach with `TargetCloseError: Protocol error (Target.setAutoAttach): Target closed`, so it is not a reliable auth source right now
 - **Site quirks**:
   - Successor to `seiga.nicovideo.jp` (old `nico-douga` handler)
   - Series page: `manga.nicovideo.jp/comic/{id}` -- lists episodes
   - Episode page: `manga.nicovideo.jp/watch/mg{id}` -- the reader
+  - Mobile pages under `sp.manga.nicovideo.jp` can expose series lists and some episodes without login (confirmed: `https://sp.manga.nicovideo.jp/comic/47265`, `https://sp.manga.nicovideo.jp/watch/mg1006398`), but the user explicitly does **not** want to rely on the mobile site for this target
   - Pages are `li.page` elements with `data-page-index` attributes
   - Each page renders as `<canvas>` (excluding `.balloon` comment overlays)
   - Some pages may use `<img data-image-id="...">` as fallback
   - Pages lazy-load: must scroll into view to trigger rendering
   - Canvas starts at `width=1` until rendered; poll until real-sized
   - Without login, shows "ご視聴にはniconicoアカウントが必要です" with only a thumbnail
+  - Login page (`account.nicovideo.jp/login`) supports direct email/phone + password login and third-party login with Apple, X, Facebook, LINE, Google, Yahoo! JAPAN, and Nintendo
+  - Registration page (`account.nicovideo.jp/register/email`) offers the same third-party providers plus email registration guarded by Cloudflare Turnstile
+  - In this environment, Cloudflare Turnstile auto-completed successfully on the registration page without extra interaction
+  - Registration email actually arrives from `account@nicovideo.jp` with subject `Niconico Account Registration Notice`; Gmail placed these mails in `[Gmail]/Spam` during testing
+  - Login MFA mail arrives from `account@nicovideo.jp` with subject `[Niconico]Confirmation code`; Gmail delivered these to `INBOX` during testing
+  - MFA mail body includes the 6-digit code in plain text and states the code is valid for 15 minutes
   - Reference: NateScarlet's userscript (https://greasyfork.org/en/scripts/436220, updated 2026-02-04) confirms canvas capture approach
 - **What was tried and failed**:
-  - (none yet -- handler is newly created)
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-noauth` without login -- page loads and metadata extracts, but no pages are available
+  - Attempted to open the burner Gmail inbox from the cloud browser to retrieve verification mail -- Google presented repeated reCAPTCHA/anti-bot challenges; IMAP app-password access is the reliable path
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth-no-profile` on 2026-03-16 still reaches metadata but no readable pages/canvases without auth
+  - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-auth --profile "/home/ubuntu/.config/google-chrome"` failed before navigation with Puppeteer's `TargetCloseError`, so the default local Chrome profile cannot currently be reused as a shortcut
+  - Directly calling Gmail API with the visible mailbox secret as a bearer token returned `401 Invalid Credentials`, and exchanging that secret through the Google token endpoint failed (`invalid_grant`)
+  - `bun cli/gmail.ts auth --browser --headed` reached the Google OAuth sign-in flow, accepted the shared mailbox username/password, and then blocked on mandatory 2-Step Verification requesting an SMS code sent to a phone ending in `41`
+  - After several successful email-registration probes, Nico's registration form started returning `Invalid email address` for the burner Gmail and fresh dotted Gmail aliases; do not assume a form rejection means the mailbox syntax is truly unsupported
+
+### Next session handoff
+
+- **Current state**: desktop `manga.nicovideo.jp/watch/mg472312` is readable and extractable once a valid Nico cookie jar exists; anonymous access is still gated
+- **Do not repeat**: browser-driving Gmail in the cloud is a dead end; use Gmail IMAP with `AUTOMATION_EMAIL` + `ME1_APP_PASS`
+- **User intent**: do not rely on the mobile `sp.manga.nicovideo.jp` site even if it is readable anonymously
+- **Auth flow now**:
+  1. Prefer `bun cli/nico-account.ts ensure` with an existing `cli/cookies/nico-manga-account.json` + `cli/cookies/nico-manga.json`
+  2. If cookies are stale, the helper can log in again and auto-read Nico's 6-digit email MFA code from Gmail
+  3. Then run `bun cli/nico-account.ts scrape --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare`
+- **Remaining rough edge**:
+  1. Fresh account creation through the burner mailbox is not yet consistently reproducible because Nico started returning `Invalid email address` on new submissions later in this session
+  2. If that recurs, use an already-created Nico alias account and let the helper manage cookie refresh + email MFA instead of re-registering
 
 ---
 
@@ -183,5 +217,5 @@
 - **Reader**: nico-manga
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
 - **Output folder**: `output/watanare/`
-- **Last grabbed**: (not yet grabbed -- handler needs auth testing)
+- **Last grabbed**: 2026-03-17 -- 第1話 (https://manga.nicovideo.jp/watch/mg472312, 34 pages)
 - **Notes**: First 12 episodes (第1話-第12話) appear free. Episodes listed oldest-first on series page. Episode URLs follow pattern `manga.nicovideo.jp/watch/mg{id}`. Requires Niconico login.
