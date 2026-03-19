@@ -18,6 +18,8 @@ See `package.json` scripts and `.cursor/rules/cli-workflow.mdc` for full referen
 - `bun run format` — Prettier on `src/`
 - `bun cli/extract.ts --reader <name> --url <url> [--out ./output]` — CLI extraction
 - `bun cli/verify.ts --input <path>` — verify extracted images + generate viewer.html
+- `bun cli/nico-account.ts ensure` — create/reuse Nico account with automated email MFA
+- `bun cli/nico-account.ts scrape --url <url>` — auth + extract from manga.nicovideo.jp
 
 ### Runtime: Bun
 The project uses **Bun** as its package manager and build tool. Bun must be on `$PATH` (`~/.bun/bin`). A `bun.lock` lockfile is present; ignore the legacy `pnpm-lock.yaml`.
@@ -43,3 +45,4 @@ Read `.cursor/rules/handler-development.mdc` for the full guide. **Always read `
 - Tailwind CSS processing may warn about outdated `caniuse-lite` data — this is cosmetic.
 - Puppeteer requires `--no-sandbox` in this environment (already set in `puppeteer-runner.ts`).
 - Extraction to manga sites requires network access; some handlers require authentication (use `--login` flag for first-time login, cookies are persisted to `cli/cookies/`).
+- `cli/nico-account.ts` needs env vars `AUTOMATION_EMAIL` and `ME1_APP_PASS` (Gmail app password) for automated email MFA. See `bun cli/nico-account.ts --help` for all options.
