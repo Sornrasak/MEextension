@@ -88,7 +88,7 @@
 - **Type**: DOM-based (canvas capture)
 - **Test URL**: https://manga.nicovideo.jp/watch/mg472312 (第1話, requires login)
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
-- **Last tested**: 2026-03-17
+- **Last tested**: 2026-03-23
 - **What works**:
   - Handler created based on proven canvas capture approach
   - Registered in CLI (`--reader nico-manga`) and Chrome extension
@@ -97,6 +97,9 @@
   - New helper `bun cli/nico-account.ts ensure` can validate saved cookies, log back in with stored Nico email/password, complete Nico's email-based 2-step verification, and persist refreshed `.nicovideo.jp` cookies
   - New helper `bun cli/nico-account.ts scrape --url "https://manga.nicovideo.jp/watch/mg472312"` can ensure auth and then run the existing `nico-manga` extractor in one step
   - Authenticated extraction now works end to end for `mg472312`: 34 `li.page` elements found, 34 pages captured, ZIP written, and `bun cli/verify.ts` reports all 34 pages valid PNGs at 650x924
+  - New resolver `bun cli/latest.ts --reader nico-manga --seriesUrl "https://manga.nicovideo.jp/comic/47265"` resolves both the latest listed episode and Nico's "latest free" shortcut; as of 2026-03-23 both point to `https://manga.nicovideo.jp/watch/mg1006398` (`第73話`)
+  - New wrapper `scripts/pull_nico_latest.sh --series-url "https://manga.nicovideo.jp/comic/47265" --output-dir ./output/watanare` builds, resolves the latest free episode, skips repeats via `.latest_episode_url`, and then delegates auth/extract/verify to the existing Nico helper
+  - `bun cli/nico-account.ts` now accepts `--accountEmail` / `NICO_ACCOUNT_EMAIL` so a known-good Nico login can be seeded once instead of relying on fresh registration
 - **Known issues**:
   - Unauthenticated CLI run reaches page metadata but finds zero `li.page` elements/canvases, then alerts: "No pages found. Make sure you are logged in and the reader is fully loaded."
   - Fresh device logins for a saved Nico account are not password-only: Nico sends a 6-digit email confirmation code and the helper must read it from Gmail before reader access is restored
@@ -120,6 +123,7 @@
   - Registration email actually arrives from `account@nicovideo.jp` with subject `Niconico Account Registration Notice`; Gmail placed these mails in `[Gmail]/Spam` during testing
   - Login MFA mail arrives from `account@nicovideo.jp` with subject `[Niconico]Confirmation code`; Gmail delivered these to `INBOX` during testing
   - MFA mail body includes the 6-digit code in plain text and states the code is valid for 15 minutes
+  - Series pages expose a stable `最新の無料話を読む` shortcut at `/comic/{id}/new`; following `https://manga.nicovideo.jp/comic/47265/new?track=ct_new` currently 302-redirects to `https://manga.nicovideo.jp/watch/mg1006398`
   - Reference: NateScarlet's userscript (https://greasyfork.org/en/scripts/436220, updated 2026-02-04) confirms canvas capture approach
 - **What was tried and failed**:
   - `bun cli/extract.ts --reader nico-manga --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare-noauth` without login -- page loads and metadata extracts, but no pages are available
@@ -129,16 +133,18 @@
   - Directly calling Gmail API with the visible mailbox secret as a bearer token returned `401 Invalid Credentials`, and exchanging that secret through the Google token endpoint failed (`invalid_grant`)
   - `bun cli/gmail.ts auth --browser --headed` reached the Google OAuth sign-in flow, accepted the shared mailbox username/password, and then blocked on mandatory 2-Step Verification requesting an SMS code sent to a phone ending in `41`
   - After several successful email-registration probes, Nico's registration form started returning `Invalid email address` for the burner Gmail and fresh dotted Gmail aliases; do not assume a form rejection means the mailbox syntax is truly unsupported
+  - `scripts/pull_nico_latest.sh` intentionally stops before extraction when neither `cli/cookies/nico-manga-account.json` nor `NICO_ACCOUNT_EMAIL` + `NICO_ACCOUNT_PASSWORD` are available; first successful unattended run still needs a one-time Nico account bootstrap
 
 ### Next session handoff
 
 - **Current state**: desktop `manga.nicovideo.jp/watch/mg472312` is readable and extractable once a valid Nico cookie jar exists; anonymous access is still gated
+- **Latest resolver state**: `bun cli/latest.ts` and `scripts/pull_nico_latest.sh` are in place for Nico Manga; the current latest free episode for Watanare resolves to `mg1006398` (`第73話`)
 - **Do not repeat**: browser-driving Gmail in the cloud is a dead end; use Gmail IMAP with `AUTOMATION_EMAIL` + `ME1_APP_PASS`
 - **User intent**: do not rely on the mobile `sp.manga.nicovideo.jp` site even if it is readable anonymously
 - **Auth flow now**:
-  1. Prefer `bun cli/nico-account.ts ensure` with an existing `cli/cookies/nico-manga-account.json` + `cli/cookies/nico-manga.json`
+  1. Prefer `bun cli/nico-account.ts ensure --accountEmail "$NICO_ACCOUNT_EMAIL" --password "$NICO_ACCOUNT_PASSWORD"` once to seed a known-good Nico login into `cli/cookies/nico-manga-account.json`, or start with an existing account file if one already exists
   2. If cookies are stale, the helper can log in again and auto-read Nico's 6-digit email MFA code from Gmail
-  3. Then run `bun cli/nico-account.ts scrape --url "https://manga.nicovideo.jp/watch/mg472312" --out ./output/watanare`
+  3. Then run `scripts/pull_nico_latest.sh --series-url "https://manga.nicovideo.jp/comic/47265" --output-dir ./output/watanare`
 - **Remaining rough edge**:
   1. Fresh account creation through the burner mailbox is not yet consistently reproducible because Nico started returning `Invalid email address` on new submissions later in this session
   2. If that recurs, use an already-created Nico alias account and let the helper manage cookie refresh + email MFA instead of re-registering
@@ -218,4 +224,4 @@
 - **Series URL**: https://manga.nicovideo.jp/comic/47265
 - **Output folder**: `output/watanare/`
 - **Last grabbed**: 2026-03-17 -- 第1話 (https://manga.nicovideo.jp/watch/mg472312, 34 pages)
-- **Notes**: First 12 episodes (第1話-第12話) appear free. Episodes listed oldest-first on series page. Episode URLs follow pattern `manga.nicovideo.jp/watch/mg{id}`. Requires Niconico login.
+- **Notes**: First 12 episodes (第1話-第12話) appear free. Episodes listed oldest-first on series page. Episode URLs follow pattern `manga.nicovideo.jp/watch/mg{id}`. Requires Niconico login. Latest free currently resolves via `/comic/47265/new` to `https://manga.nicovideo.jp/watch/mg1006398` (`第73話`) as of 2026-03-23.
