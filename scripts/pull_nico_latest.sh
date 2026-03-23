@@ -12,6 +12,11 @@ Options:
   --account-file PATH  Stored Nico account file (default: cli/cookies/nico-manga-account.json)
   --cookie-file PATH   Stored Nico cookie jar (default: cli/cookies/nico-manga.json)
   --state-file PATH    State file used to skip already-downloaded episodes
+  --preview-video      Render an MP4 preview from the verified ZIP
+  --preview-output PATH
+                       Preview video path (default: <zip>.preview.mp4)
+  --preview-seconds-per-page NUM
+                       Seconds to show each page in the preview (default: 1.2)
   --dry-run            Resolve the latest episode and print what would run
   --force              Ignore the state file and extract anyway
   -h, --help           Show this help
@@ -36,6 +41,34 @@ COOKIE_FILE="cli/cookies/nico-manga.json"
 STATE_FILE=""
 DRY_RUN="false"
 FORCE="false"
+PREVIEW_VIDEO="false"
+PREVIEW_OUTPUT=""
+PREVIEW_SECONDS_PER_PAGE="1.2"
+
+ensure_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ -x "$HOME/.bun/bin/bun" ]]; then
+    export PATH="$HOME/.bun/bin:$PATH"
+    return
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Bun is required, and curl is not available to install it automatically." >&2
+    exit 3
+  fi
+
+  echo "Installing Bun..."
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "Bun installation failed." >&2
+    exit 3
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +90,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --state-file)
       STATE_FILE="${2:-}"
+      shift 2
+      ;;
+    --preview-video)
+      PREVIEW_VIDEO="true"
+      shift
+      ;;
+    --preview-output)
+      PREVIEW_OUTPUT="${2:-}"
+      shift 2
+      ;;
+    --preview-seconds-per-page)
+      PREVIEW_SECONDS_PER_PAGE="${2:-}"
       shift 2
       ;;
     --dry-run)
@@ -85,6 +130,8 @@ if [[ -z "$SERIES_URL" || -z "$OUTPUT_DIR" ]]; then
 fi
 
 cd "$ROOT_DIR"
+
+ensure_bun
 
 mkdir -p "$OUTPUT_DIR"
 if [[ -z "$STATE_FILE" ]]; then
@@ -179,6 +226,21 @@ fi
 echo "Verifying $new_zip ..."
 bun cli/verify.ts --input "$new_zip"
 
+PREVIEW_VIDEO_PATH=""
+if [[ "$PREVIEW_VIDEO" == "true" ]]; then
+  if [[ -n "$PREVIEW_OUTPUT" ]]; then
+    PREVIEW_VIDEO_PATH="$PREVIEW_OUTPUT"
+  else
+    PREVIEW_VIDEO_PATH="${new_zip%.zip}.preview.mp4"
+  fi
+
+  echo "Rendering preview video to $PREVIEW_VIDEO_PATH ..."
+  bun cli/preview.ts \
+    --input "$new_zip" \
+    --output "$PREVIEW_VIDEO_PATH" \
+    --secondsPerPage "$PREVIEW_SECONDS_PER_PAGE"
+fi
+
 printf '%s\n' "$LATEST_FREE_URL" >"$STATE_FILE"
 
 {
@@ -189,6 +251,7 @@ printf '%s\n' "$LATEST_FREE_URL" >"$STATE_FILE"
   printf 'LATEST_LISTED_URL=%q\n' "${LATEST_LISTED_URL:-}"
   printf 'LATEST_LISTED_TITLE=%q\n' "${LATEST_LISTED_TITLE:-}"
   printf 'VERIFIED_ZIP=%q\n' "$new_zip"
+  printf 'PREVIEW_VIDEO_PATH=%q\n' "$PREVIEW_VIDEO_PATH"
   printf 'RESOLVED_AT=%q\n' "${RESOLVED_AT:-}"
 } >"$OUTPUT_DIR/latest_episode.env"
 

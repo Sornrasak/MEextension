@@ -12,6 +12,7 @@
     "extract": "bun cli/extract.ts",
     "latest": "bun cli/latest.ts",
     "nico-account": "bun cli/nico-account.ts",
+    "preview-video": "bun cli/preview.ts",
     "pull:nico-latest": "bash scripts/pull_nico_latest.sh",
     "verify": "bun cli/verify.ts",
     "lint": "bun run eslint src --ext .ts,.tsx,.js,.jsx",
