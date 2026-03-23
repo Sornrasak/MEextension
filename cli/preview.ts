@@ -23,6 +23,10 @@ const DEFAULT_SECONDS_PER_PAGE = 1.2;
 const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 const DEFAULT_BACKGROUND = "white";
+const collator = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -187,11 +191,6 @@ function collectImages(dir: string): string[] {
 
   return images;
 }
-
-const collator = new Intl.Collator("en", {
-  numeric: true,
-  sensitivity: "base",
-});
 
 function naturalCompare(left: string, right: string): number {
   return collator.compare(left, right);
