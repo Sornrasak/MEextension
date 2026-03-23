@@ -33,6 +33,7 @@ const { values } = parseArgs({
   options: {
     input: { type: "string", short: "i" },
     output: { type: "string", short: "o" },
+    htmlOutput: { type: "string" },
     secondsPerPage: { type: "string", default: String(DEFAULT_SECONDS_PER_PAGE) },
     width: { type: "string", default: String(DEFAULT_WIDTH) },
     height: { type: "string", default: String(DEFAULT_HEIGHT) },
@@ -51,6 +52,7 @@ Usage:
 Options:
   -i, --input            ZIP file or directory containing page images (required)
   -o, --output           Output video path (default: <input>.preview.mp4)
+      --htmlOutput       Output HTML slideshow path (default: <video>.html)
       --secondsPerPage   Seconds to show each page (default: ${DEFAULT_SECONDS_PER_PAGE})
       --width            Output video width (default: ${DEFAULT_WIDTH})
       --height           Output video height (default: ${DEFAULT_HEIGHT})
@@ -62,6 +64,7 @@ Options:
 
 const inputPath = resolve(values.input);
 const outputPath = resolve(values.output ?? defaultOutputPath(inputPath));
+const htmlOutputPath = resolve(values.htmlOutput ?? defaultHtmlOutputPath(outputPath));
 const secondsPerPage = Number(values.secondsPerPage ?? DEFAULT_SECONDS_PER_PAGE);
 const width = Number(values.width ?? DEFAULT_WIDTH);
 const height = Number(values.height ?? DEFAULT_HEIGHT);
@@ -114,6 +117,13 @@ try {
   });
 
   console.log(`Preview video written to ${outputPath}`);
+  writeHtmlPreview({
+    images,
+    htmlOutputPath,
+    title: basename(outputPath, extname(outputPath)),
+    secondsPerPage,
+  });
+  console.log(`Preview HTML written to ${htmlOutputPath}`);
 } finally {
   rmSync(workspace, { recursive: true, force: true });
 }
@@ -129,6 +139,10 @@ function defaultOutputPath(input: string): string {
   }
 
   return join(dirname(input), `${basename(input)}.preview.mp4`);
+}
+
+function defaultHtmlOutputPath(videoOutput: string): string {
+  return join(dirname(videoOutput), `${basename(videoOutput, extname(videoOutput))}.html`);
 }
 
 function ensureFfmpeg(): void {
@@ -271,4 +285,205 @@ function renderPreviewVideo(options: {
   if (result.status !== 0) {
     throw new Error(`ffmpeg exited with status ${result.status ?? "unknown"}`);
   }
+}
+
+function writeHtmlPreview(options: {
+  images: string[];
+  htmlOutputPath: string;
+  title: string;
+  secondsPerPage: number;
+}): void {
+  const { images, htmlOutputPath, title, secondsPerPage } = options;
+  const slides = images.map((imagePath, index) => ({
+    index: index + 1,
+    name: basename(imagePath),
+    dataUrl: toDataUrl(imagePath),
+  }));
+
+  mkdirSync(dirname(htmlOutputPath), { recursive: true });
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #111827;
+      color: #f9fafb;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header, footer {
+      padding: 16px 20px;
+      background: rgba(17, 24, 39, 0.96);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    footer {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 0;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .stage {
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+    img {
+      max-width: min(96vw, 900px);
+      max-height: calc(100vh - 210px);
+      width: auto;
+      height: auto;
+      border-radius: 10px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+      background: white;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: #2563eb;
+      color: white;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #374151;
+    }
+    .meta {
+      opacity: 0.85;
+      font-size: 14px;
+    }
+    input[type="range"] {
+      width: min(360px, 80vw);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0 0 6px 0; font-size: 20px;">${escapeHtml(title)}</h1>
+    <div class="meta">Self-contained slideshow demo. Use arrow keys or space to play/pause.</div>
+  </header>
+  <main class="stage">
+    <img id="slide" alt="preview slide" />
+  </main>
+  <footer>
+    <button id="prev" class="secondary" type="button">Prev</button>
+    <button id="play" type="button">Pause</button>
+    <button id="next" class="secondary" type="button">Next</button>
+    <input id="scrub" type="range" min="1" max="${slides.length}" value="1" />
+    <span id="status" class="meta"></span>
+  </footer>
+  <script>
+    const slides = ${JSON.stringify(slides)};
+    const secondsPerPage = ${JSON.stringify(secondsPerPage)};
+    let current = 0;
+    let playing = true;
+    let timer = null;
+
+    const slideEl = document.getElementById("slide");
+    const statusEl = document.getElementById("status");
+    const scrubEl = document.getElementById("scrub");
+    const playEl = document.getElementById("play");
+
+    function render() {
+      const slide = slides[current];
+      slideEl.src = slide.dataUrl;
+      slideEl.alt = slide.name;
+      statusEl.textContent = slide.index + " / " + slides.length + " - " + slide.name;
+      scrubEl.value = String(slide.index);
+      playEl.textContent = playing ? "Pause" : "Play";
+    }
+
+    function restartTimer() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (!playing || slides.length <= 1) {
+        return;
+      }
+      timer = setInterval(() => {
+        current = (current + 1) % slides.length;
+        render();
+      }, secondsPerPage * 1000);
+    }
+
+    function go(delta) {
+      current = (current + delta + slides.length) % slides.length;
+      render();
+      restartTimer();
+    }
+
+    document.getElementById("prev").addEventListener("click", () => go(-1));
+    document.getElementById("next").addEventListener("click", () => go(1));
+    playEl.addEventListener("click", () => {
+      playing = !playing;
+      render();
+      restartTimer();
+    });
+    scrubEl.addEventListener("input", (event) => {
+      current = Number(event.target.value) - 1;
+      render();
+      restartTimer();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft") go(-1);
+      if (event.key === "ArrowRight") go(1);
+      if (event.key === " ") {
+        event.preventDefault();
+        playing = !playing;
+        render();
+        restartTimer();
+      }
+    });
+
+    render();
+    restartTimer();
+  </script>
+</body>
+</html>`;
+
+  writeFileSync(htmlOutputPath, html, "utf-8");
+}
+
+function toDataUrl(imagePath: string): string {
+  const ext = extname(imagePath).toLowerCase();
+  const mimeType = getMimeType(ext);
+  const encoded = readFileSync(imagePath).toString("base64");
+  return `data:${mimeType};base64,${encoded}`;
+}
+
+function getMimeType(ext: string): string {
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".avif":
+      return "image/avif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

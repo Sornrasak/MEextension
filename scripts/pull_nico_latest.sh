@@ -15,6 +15,8 @@ Options:
   --preview-video      Render an MP4 preview from the verified ZIP
   --preview-output PATH
                        Preview video path (default: <zip>.preview.mp4)
+  --preview-html-output PATH
+                       Preview HTML path (default: <video>.html)
   --preview-seconds-per-page NUM
                        Seconds to show each page in the preview (default: 1.2)
   --dry-run            Resolve the latest episode and print what would run
@@ -43,6 +45,7 @@ DRY_RUN="false"
 FORCE="false"
 PREVIEW_VIDEO="false"
 PREVIEW_OUTPUT=""
+PREVIEW_HTML_OUTPUT=""
 PREVIEW_SECONDS_PER_PAGE="1.2"
 
 ensure_bun() {
@@ -98,6 +101,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --preview-output)
       PREVIEW_OUTPUT="${2:-}"
+      shift 2
+      ;;
+    --preview-html-output)
+      PREVIEW_HTML_OUTPUT="${2:-}"
       shift 2
       ;;
     --preview-seconds-per-page)
@@ -227,6 +234,7 @@ echo "Verifying $new_zip ..."
 bun cli/verify.ts --input "$new_zip"
 
 PREVIEW_VIDEO_PATH=""
+PREVIEW_HTML_PATH=""
 if [[ "$PREVIEW_VIDEO" == "true" ]]; then
   if [[ -n "$PREVIEW_OUTPUT" ]]; then
     PREVIEW_VIDEO_PATH="$PREVIEW_OUTPUT"
@@ -234,10 +242,17 @@ if [[ "$PREVIEW_VIDEO" == "true" ]]; then
     PREVIEW_VIDEO_PATH="${new_zip%.zip}.preview.mp4"
   fi
 
+  if [[ -n "$PREVIEW_HTML_OUTPUT" ]]; then
+    PREVIEW_HTML_PATH="$PREVIEW_HTML_OUTPUT"
+  else
+    PREVIEW_HTML_PATH="${PREVIEW_VIDEO_PATH%.*}.html"
+  fi
+
   echo "Rendering preview video to $PREVIEW_VIDEO_PATH ..."
   bun cli/preview.ts \
     --input "$new_zip" \
     --output "$PREVIEW_VIDEO_PATH" \
+    --htmlOutput "$PREVIEW_HTML_PATH" \
     --secondsPerPage "$PREVIEW_SECONDS_PER_PAGE"
 fi
 
@@ -252,6 +267,7 @@ printf '%s\n' "$LATEST_FREE_URL" >"$STATE_FILE"
   printf 'LATEST_LISTED_TITLE=%q\n' "${LATEST_LISTED_TITLE:-}"
   printf 'VERIFIED_ZIP=%q\n' "$new_zip"
   printf 'PREVIEW_VIDEO_PATH=%q\n' "$PREVIEW_VIDEO_PATH"
+  printf 'PREVIEW_HTML_PATH=%q\n' "$PREVIEW_HTML_PATH"
   printf 'RESOLVED_AT=%q\n' "${RESOLVED_AT:-}"
 } >"$OUTPUT_DIR/latest_episode.env"
 
