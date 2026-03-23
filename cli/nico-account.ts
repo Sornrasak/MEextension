@@ -53,6 +53,7 @@ type NicoCliConfig = {
   verify: boolean;
   cookieFile: string;
   accountFile: string;
+  accountEmail?: string;
   registrationEmail?: string;
   mailboxEmail?: string;
   mailPasswordEnv: string;
@@ -99,6 +100,7 @@ const { positionals, values } = parseArgs({
     verify: { type: "boolean", default: false },
     cookieFile: { type: "string", default: DEFAULT_COOKIE_FILE },
     accountFile: { type: "string", default: DEFAULT_ACCOUNT_FILE },
+    accountEmail: { type: "string" },
     registrationEmail: { type: "string" },
     mailboxEmail: { type: "string" },
     mailPasswordEnv: { type: "string", default: "ME1_APP_PASS" },
@@ -130,6 +132,7 @@ const config: NicoCliConfig = {
   verify: values.verify ?? false,
   cookieFile: resolve(values.cookieFile ?? DEFAULT_COOKIE_FILE),
   accountFile: resolve(values.accountFile ?? DEFAULT_ACCOUNT_FILE),
+  accountEmail: values.accountEmail ?? process.env.NICO_ACCOUNT_EMAIL,
   registrationEmail: values.registrationEmail,
   mailboxEmail: values.mailboxEmail ?? process.env.AUTOMATION_EMAIL,
   mailPasswordEnv: values.mailPasswordEnv ?? "ME1_APP_PASS",
@@ -163,6 +166,7 @@ Options:
       --verify              Print a reminder to run cli/verify after scrape
       --cookieFile          Cookie jar path (default: ${DEFAULT_COOKIE_FILE})
       --accountFile         Stored Nico credentials path (default: ${DEFAULT_ACCOUNT_FILE})
+      --accountEmail        Existing Nico account email to seed into accountFile (default: NICO_ACCOUNT_EMAIL)
       --registrationEmail   Explicit email to register instead of generating a Gmail dotted alias
       --mailboxEmail        Mailbox address used for IMAP polling (default: AUTOMATION_EMAIL)
       --mailPasswordEnv     Env var name containing the Gmail app password (default: ME1_APP_PASS)
@@ -241,7 +245,8 @@ async function main(cliConfig: NicoCliConfig): Promise<void> {
 }
 
 async function ensureNicoSession(cliConfig: NicoCliConfig): Promise<EnsureResult> {
-  const account = readAccountFile(cliConfig.accountFile);
+  const savedAccount = readAccountFile(cliConfig.accountFile);
+  const account = resolveSeedAccount(cliConfig, savedAccount);
 
   if (existsSync(cliConfig.cookieFile)) {
     const cookieCheck = await validateSavedCookies(cliConfig);
@@ -876,6 +881,42 @@ function writeAccountFile(path: string, account: NicoAccountState): void {
   writeFileSync(path, JSON.stringify(account, null, 2));
 }
 
+function resolveSeedAccount(
+  cliConfig: NicoCliConfig,
+  savedAccount: NicoAccountState | null
+): NicoAccountState | null {
+  if (!cliConfig.accountEmail) {
+    return savedAccount;
+  }
+
+  const email = cliConfig.accountEmail.trim();
+  const password =
+    cliConfig.accountPassword ??
+    (savedAccount?.email === email ? savedAccount.password : undefined);
+
+  if (!password) {
+    throw new Error(
+      "Provide --password or NICO_ACCOUNT_PASSWORD the first time you seed an existing Nico account."
+    );
+  }
+
+  return {
+    email,
+    password,
+    nickname: savedAccount?.nickname ?? cliConfig.nickname,
+    sex: savedAccount?.sex ?? cliConfig.sex,
+    birthYear: savedAccount?.birthYear ?? cliConfig.birthYear,
+    birthMonth: savedAccount?.birthMonth ?? cliConfig.birthMonth,
+    birthDay: savedAccount?.birthDay ?? cliConfig.birthDay,
+    country: savedAccount?.country ?? cliConfig.country,
+    mailboxEmail: cliConfig.mailboxEmail ?? savedAccount?.mailboxEmail ?? email,
+    createdAt: savedAccount?.createdAt ?? new Date().toISOString(),
+    lastLoginAt: savedAccount?.lastLoginAt,
+    lastValidatedAt: savedAccount?.lastValidatedAt,
+    userId: savedAccount?.userId,
+  };
+}
+
 function buildRegistrationEmailCandidates(
   mailboxEmail: string,
   explicitRegistrationEmail: string | undefined,
@@ -995,7 +1036,23 @@ async function launchBrowser(headless: boolean): Promise<Browser> {
       "--disable-blink-features=AutomationControlled",
     ],
     defaultViewport: { width: 1280, height: 900 },
+    ...(resolveChromeExecutablePath()
+      ? { executablePath: resolveChromeExecutablePath() }
+      : {}),
   });
+}
+
+function resolveChromeExecutablePath(): string | undefined {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_EXECUTABLE_PATH,
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ];
+
+  return candidates.find((candidate) => candidate && existsSync(candidate));
 }
 
 function requireEnv(name: string): string {

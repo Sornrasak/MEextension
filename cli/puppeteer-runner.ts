@@ -82,11 +82,13 @@ export async function runDomHandler(
     "--disable-setuid-sandbox",
     "--disable-blink-features=AutomationControlled",
   ];
+  const executablePath = resolveChromeExecutablePath();
 
   const browser: Browser = await puppeteer.launch({
     headless: headless ? true : false,
     args: launchArgs,
     defaultViewport: { width: 1280, height: 900 },
+    ...(executablePath ? { executablePath } : {}),
     ...(userDataDir ? { userDataDir: resolve(userDataDir) } : {}),
   });
 
@@ -317,6 +319,19 @@ function ensureParentDir(filePath: string): void {
   if (!existsSync(parentDir)) {
     mkdirSync(parentDir, { recursive: true });
   }
+}
+
+function resolveChromeExecutablePath(): string | undefined {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_EXECUTABLE_PATH,
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ];
+
+  return candidates.find((candidate) => candidate && existsSync(candidate));
 }
 
 /**
