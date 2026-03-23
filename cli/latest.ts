@@ -97,7 +97,7 @@ async function resolveNicoMangaSeries(
   const latestListed = episodes[episodes.length - 1] ?? null;
   const latestFreeShortcutUrl = extractLatestFreeShortcutUrl(html, seriesUrl);
   const latestFreeUrl = latestFreeShortcutUrl
-    ? await resolveFinalUrl(latestFreeShortcutUrl, timeoutMs)
+    ? normalizeEpisodeUrl(await resolveFinalUrl(latestFreeShortcutUrl, timeoutMs))
     : null;
   const latestFree = latestFreeUrl
     ? episodes.find((episode) => normalizeEpisodeUrl(episode.url) === normalizeEpisodeUrl(latestFreeUrl)) ??
@@ -181,7 +181,7 @@ function parseNicoEpisodes(html: string, seriesUrl: string): EpisodeSummary[] {
     const label = block.match(/<span class="selling_label [^"]*">\s*([^<]+)\s*<\/span>/)?.[1];
 
     episodes.push({
-      url: new URL(href, seriesUrl).toString(),
+      url: normalizeEpisodeUrl(new URL(href, seriesUrl).toString()),
       title: decodeHtml(title.trim()),
       index: idx,
       accessLabel: label ? decodeHtml(label.trim()) : "web",

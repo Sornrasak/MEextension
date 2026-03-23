@@ -91,9 +91,14 @@ if [[ -z "$STATE_FILE" ]]; then
   STATE_FILE="$OUTPUT_DIR/.latest_episode_url"
 fi
 
-if [[ ! -f "node_modules/imapflow/package.json" || ! -f "node_modules/puppeteer/package.json" ]]; then
-  echo "Installing Bun dependencies..."
-  bun install --frozen-lockfile
+if ! bun cli/nico-account.ts help >/dev/null 2>&1; then
+  echo "Installing Node dependencies with npm ci..."
+  npm ci --ignore-scripts
+fi
+
+if ! bun cli/nico-account.ts help >/dev/null 2>&1; then
+  echo "Missing dependencies required by the Nico pull flow after npm ci." >&2
+  exit 3
 fi
 
 echo "Building handlers..."
