@@ -138,7 +138,7 @@ if [[ -z "$STATE_FILE" ]]; then
   STATE_FILE="$OUTPUT_DIR/.latest_episode_url"
 fi
 
-if ! bun cli/nico-account.ts help >/dev/null 2>&1; then
+if [[ ! -d node_modules ]]; then
   echo "Installing Node dependencies with npm ci..."
   npm ci --ignore-scripts
 fi
