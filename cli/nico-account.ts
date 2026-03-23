@@ -1036,7 +1036,23 @@ async function launchBrowser(headless: boolean): Promise<Browser> {
       "--disable-blink-features=AutomationControlled",
     ],
     defaultViewport: { width: 1280, height: 900 },
+    ...(resolveChromeExecutablePath()
+      ? { executablePath: resolveChromeExecutablePath() }
+      : {}),
   });
+}
+
+function resolveChromeExecutablePath(): string | undefined {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_EXECUTABLE_PATH,
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ];
+
+  return candidates.find((candidate) => candidate && existsSync(candidate));
 }
 
 function requireEnv(name: string): string {
